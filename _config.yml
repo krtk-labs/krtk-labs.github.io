@@ -1,6 +1,20 @@
-title: Kartik Vaidyanathan | Blueprint & Code
+title: Blueprint & Code
 description: A catalog of all things technology
+
+url: "https://krtk-labs.github.io"
+
+remote_theme: just-the-docs/just-the-docs
+
 plugins:
   - jekyll-remote-theme
-remote_theme: poole/hyde
 
+color_scheme: dark
+
+search_enabled: true
+
+heading_anchors: true
+
+back_to_top: true
+back_to_top_text: "Back to top"
+
+footer_content: "© 2026 Kartik Vaidyanathan"
