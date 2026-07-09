@@ -491,6 +491,38 @@ For anything you plan to publish or rely on for a real capacity decision, wrap t
 
 **Takeaway for this use case:** even before multi-core parallelism enters the picture, submitting 20 million individual tasks (as in Section 1's naive attempt) means 20 million `Runnable`/`Future` allocations and 20 million contended queue operations — a fixed cost `ForkJoinPool` simply never pays, because it only ever queues the handful of tasks your recursion actually splits into.
 
+
+**Why didn't we use invokeAll()?**
+
+You may notice that this implementation explicitly calls fork(), compute(), and join() instead of using the convenience method invokeAll(). This is intentional. While invokeAll() is perfectly valid—and commonly seen in production code—it hides the core mechanics of the Fork/Join framework. By using the primitive operations directly, we can clearly see when a task is made available for stealing (fork()), when the current worker continues executing useful work (compute()), and when it synchronizes with the forked task (join()). Once these concepts are understood, invokeAll() becomes much easier to appreciate as simply a convenience wrapper around the same underlying pattern.
+
+@Override
+protected Double compute() {
+
+    if (end - start <= THRESHOLD) {
+
+        double total = 0;
+
+        for (int i = start; i < end; i++) {
+            total += calculateRisk(notionals[i]);
+        }
+
+        return total;
+    }
+
+    int mid = (start + end) / 2;
+
+    RiskTask left = new RiskTask(notionals, start, mid);
+    RiskTask right = new RiskTask(notionals, mid, end);
+
+    invokeAll(left, right);
+
+    double leftResult = left.join();
+    double rightResult = right.join();
+
+    return leftResult + rightResult;
+}
+
 ## 13. ForkJoinPool vs Virtual Threads — has Loom made it obsolete?
 
 This is one of the most common misconceptions since Java 21 shipped virtual threads, and it's worth being precise about.
