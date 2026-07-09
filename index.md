@@ -4,4 +4,6 @@ layout: default
 
 # Welcome to KRTK Labs
 
-[Read about Fork-Join Pool](./fork-join-pool)
+## Java Catalog
+
+[Read Fork-Join Pool Demystified](/fork-join-pool-demystified)
