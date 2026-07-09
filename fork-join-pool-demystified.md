@@ -343,6 +343,8 @@ Neither one is strictly "better" — they were built to solve different shapes o
 
 Everything so far has been architecture and theory. Let's actually measure it, using the exact `RiskCalculationTask` workload from Section 4, run both ways:
 
+
+
 ```java
 import java.util.List;
 import java.util.ArrayList;
@@ -453,30 +455,36 @@ public class RiskBenchmark {
     }
 }
 ```
+To compare the two approaches, I implemented the same CPU-intensive workload using both a fixed ExecutorService and a ForkJoinPool. The workload recursively computes a synthetic portfolio risk calculation over a large dataset, ensuring both implementations perform identical work and produce the same result.
 
-*(This file is also available as a standalone, ready-to-run `RiskBenchmark.java` alongside this article.)*
+Note: These numbers should not be treated as definitive performance characteristics of ForkJoinPool. Benchmark results will vary depending on the workload, task granularity, JVM version, warm-up, available memory, processor architecture, and operating system. The purpose of this benchmark is to provide a representative comparison and demonstrate the behaviour of the two approaches under the same conditions.
 
-> **A callout before you run this:** don't be alarmed if an earlier, naive version of this comparison (checking `Math.abs(execResult - fjResult) < 1e-6`) prints `results match: false`. That's not a concurrency bug — it's floating-point summation order. `ExecutorService` above sums 500,000 results strictly left-to-right, while `ForkJoinPool` sums them as a pairwise binary tree (`leftResult + rightResult` at every merge in `compute()`). IEEE 754 addition isn't associative, so `(a + b) + c` and `a + (b + c)` aren't guaranteed to produce identical bits — accumulated over hundreds of thousands of additions, that rounding noise can exceed a tight *absolute* tolerance even though the *relative* error is negligible. The version above already accounts for this by comparing with a relative tolerance (`1e-9`) instead — see the [analysis below](#analysis-what-the-numbers-actually-tell-us) for the full explanation.
+The benchmark was executed on a MacBook Pro (Apple M3 Pro) with 11 CPU cores.
 
-Running this with `java RiskBenchmark.java` (Java 11+ supports launching `.java` files directly, no separate compile step needed) will print a line per pool size, e.g.:
 
 ```
-Available processors: 8
-poolSize=1    ExecutorService=  XXXXms  ForkJoinPool=  XXXXms  speedup=X.XXx  (results match: true, relative error: X.XXXe-XX)
-poolSize=2    ExecutorService=  XXXXms  ForkJoinPool=  XXXXms  speedup=X.XXx  (results match: true, relative error: X.XXXe-XX)
-poolSize=4    ExecutorService=  XXXXms  ForkJoinPool=  XXXXms  speedup=X.XXx  (results match: true, relative error: X.XXXe-XX)
-poolSize=8    ExecutorService=  XXXXms  ForkJoinPool=  XXXXms  speedup=X.XXx  (results match: true, relative error: X.XXXe-XX)
-poolSize=8    ExecutorService=  XXXXms  ForkJoinPool=  XXXXms  speedup=X.XXx  (results match: true, relative error: X.XXXe-XX)
+Available processors: 11
+
+poolSize=1    ExecutorService= 11498ms  ForkJoinPool= 11483ms  speedup=1.00x  (results match: true)
+poolSize=2    ExecutorService=  5856ms  ForkJoinPool=  5528ms  speedup=1.06x  (results match: true)
+poolSize=4    ExecutorService=  3027ms  ForkJoinPool=  2748ms  speedup=1.10x  (results match: true)
+poolSize=8    ExecutorService=  1629ms  ForkJoinPool=  1426ms  speedup=1.14x  (results match: true)
+poolSize=11   ExecutorService=  1221ms  ForkJoinPool=  1048ms  speedup=1.17x  (results match: true)
 ```
 
-A few things worth checking once you have your own numbers:
+** What should we take away from this?
 
-| What to look at | What it tells you |
-|---|---|
-| `ExecutorService` time at `poolSize=1` vs `ForkJoinPool` time at `poolSize=1` | Pure scheduling/allocation overhead — 500,000 `Runnable`/`Future` objects and shared-queue submissions vs. one task recursively split into ~500 leaf chunks of 1,000 trades each |
-| How `ForkJoinPool` time changes as `poolSize` goes from 1 → your core count | Work stealing in action — more cores should mean close-to-linear speedup, since `join()` makes idle workers help rather than block (Section 5) |
-| How `ExecutorService` time changes across the same pool sizes | Whether the single shared blocking queue is becoming a bottleneck as more threads contend for it (Section 1) |
-| The gap between the two at `poolSize = availableProcessors()` | The realistic answer to "which one should I actually use for this workload" on your own hardware |
+The first thing you'll notice is that both implementations scale well as additional CPU cores become available. That's expected—both are able to execute work in parallel.
+
+However, ForkJoinPool consistently performs slightly better. The improvement isn't because it uses more threads or a fundamentally different execution model; both ultimately execute on the same CPU cores. The difference comes from how the work is scheduled.
+
+A traditional ExecutorService relies on a shared work queue. Every worker repeatedly competes for tasks from the same queue, and once work has been assigned to a thread, there is relatively little opportunity for dynamic load balancing.
+
+ForkJoinPool, on the other hand, distributes work across per-worker deques and uses work stealing to keep idle workers productive. As some tasks complete earlier than others, idle workers steal remaining work from busy workers, leading to better load balancing, reduced contention, and improved CPU utilisation.
+
+Notice that the performance difference isn't dramatic—it ranges from approximately 6% to 17% in this benchmark. That's perfectly normal. The biggest performance gain comes from parallelism itself. ForkJoinPool then extracts additional efficiency through smarter scheduling and work stealing.
+
+This is precisely why ForkJoinPool was designed for CPU-bound divide-and-conquer algorithms, where uneven workloads are common and intelligent scheduling can make better use of the available cores.
 
 **Expect the gap to widen in ForkJoinPool's favor as core count goes up.** Both approaches parallelize the CPU-bound work, but every one of the `ExecutorService`'s 500,000 dequeues goes through the same shared, locked queue, so contention grows with thread count — while `ForkJoinPool`'s per-worker deques and random work stealing (Section 7) largely sidestep that cost. `TRADE_COUNT`, `PRICING_ITERATIONS`, and `THRESHOLD` at the top of the file are all easy to tune if you want to see how the gap behaves at a different problem size or granularity.
 
@@ -496,9 +504,40 @@ So: a CPU-bound recursive algorithm — sorting, matrix multiplication, tree tra
 
 ## 14. The `parallelStream()` trap nobody warns you about
 
-Since `parallelStream()` is the most common way people touch ForkJoinPool without realizing it, it's worth a specific warning: every `parallelStream()` call in your entire JVM — across every library, every request, every background job — shares the *same* common pool by default. If one part of your application submits a long-running or blocking task to a parallel stream, it can starve unrelated parallel streams elsewhere in the same process, because they're all quietly drawing from the same fixed-size worker pool. This is a frequent, hard-to-diagnose source of "random" latency spikes in services that lean on `parallelStream()` for anything beyond short, pure CPU-bound transformations.
+After reading this article, you might be wondering:
 
-## 15. Common misconceptions, corrected
+"If ForkJoinPool is such an important concurrency framework, why don't I see it used very often in production code?"
+
+The answer is that you rarely interact with it directly because many of Java's higher-level APIs already use it internally. Rather than creating your own ForkJoinPool and writing RecursiveTask implementations, you typically use abstractions like parallelStream(), Arrays.parallelSort(), or even CompletableFuture.supplyAsync() (when no custom executor is provided). Under the covers, these APIs delegate the scheduling and execution of work to a ForkJoinPool, allowing you to benefit from work stealing without managing the pool yourself.
+
+One of the most common examples is parallelStream(). Every call to parallelStream() is, by default, executed on the ForkJoinPool.commonPool().
+
+This leads to an important consequence: every parallelStream() call in your entire JVM—across every library, every request, and every background job—shares the same common pool by default. If one part of your application submits a long-running or blocking task to a parallel stream, it can starve unrelated parallel streams elsewhere in the same process because they're all quietly drawing from the same fixed-size worker pool. This is a frequent, hard-to-diagnose source of "random" latency spikes in services that lean on parallelStream() for anything beyond short, pure CPU-bound transformations.
+
+## 15. So why would I ever implement a ForkJoinPool myself?
+
+If parallelStream() already gives us parallelism and internally uses ForkJoinPool, why would we ever write our own RecursiveTask or RecursiveAction?
+
+The answer is control.
+
+parallelStream() is designed for a specific style of computation: applying the same pipeline of operations (map, filter, reduce, collect) over a collection. It decides how to partition the data, when to split the work, and how to schedule it. For most collection-based transformations, that's exactly what you want.
+
+However, not every parallel problem naturally looks like a stream pipeline. Many real-world algorithms are recursive by nature and require you to decide how the work should be decomposed. Examples include traversing directory structures, processing trees or graphs, image tiling, matrix multiplication, parsing expression trees, portfolio aggregation, or divide-and-conquer algorithms such as Merge Sort and Quick Sort. In these scenarios, your algorithm—not the Stream API—knows how the work should be split and when recursion should stop.
+
+Implementing RecursiveTask or RecursiveAction gives you complete control over:
+
+how the problem is recursively decomposed,
+the threshold at which work becomes sequential,
+how intermediate results are combined,
+and the overall execution flow of the algorithm.
+
+The decision is therefore not "Should I use parallelStream() or ForkJoinPool?" but rather:
+
+If the problem is a collection transformation, let the Stream API handle the decomposition.
+If the problem is a recursive divide-and-conquer algorithm, implement your own RecursiveTask and let ForkJoinPool focus on what it does best: scheduling, load balancing, and work stealing.
+
+
+## 16. Common misconceptions, corrected
 
 | Misconception | Reality |
 |---|---|
@@ -510,7 +549,7 @@ Since `parallelStream()` is the most common way people touch ForkJoinPool withou
 | Work stealing always steals the *biggest* task | It steals the *oldest* task — usually, but not necessarily, the biggest |
 | Virtual threads replace ForkJoinPool | They solve different problems (waiting vs. computing) and can coexist |
 
-## 16. So — when should you actually reach for ForkJoinPool?
+## 17. So — when should you actually reach for ForkJoinPool?
 
 Ask yourself four questions:
 
@@ -523,7 +562,7 @@ If the answer is yes to all four, ForkJoinPool (directly, or via `parallelStream
 
 If instead you're running a batch of *unrelated* tasks — send an email, upload a file, generate a PDF, call a REST API — reach for a plain `ExecutorService`, or on Java 21+, virtual threads. Those tasks aren't recursive, aren't CPU-bound in the way that benefits from stealing, and will spend most of their time waiting rather than computing.
 
-## 17. Final mental model
+## 18. Final mental model
 
 ```
                     Your Algorithm
@@ -548,7 +587,7 @@ If instead you're running a batch of *unrelated* tasks — send an email, upload
 
 The responsibilities are deliberately separated. Your code defines *what* the computation looks like. ForkJoinPool decides *who* executes *what*, *when*, and *where*. That clean separation is exactly why the same scheduler can power parallel sorting, image processing, graph traversal, and financial risk engines — all without knowing a single thing about the problem domain sitting on top of it.
 
-## 18. Key takeaways
+## 19. Key takeaways
 
 - ForkJoinPool is a **scheduler**, not a divide-and-conquer engine — you define the task decomposition, it manages execution.
 - Each worker owns a **private deque**, which is what dramatically reduces contention compared to a shared-queue thread pool.
