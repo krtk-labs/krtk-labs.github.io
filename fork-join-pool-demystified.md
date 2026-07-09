@@ -5,12 +5,6 @@ title: Fork-Join Pool Guide
 
 # ForkJoinPool Demystified: From `fork()` to Work Stealing
 
-*Understanding what `java.util.concurrent.ForkJoinPool` actually does, why it exists, how its work-stealing scheduler works internally, and when you should (and should not) reach for it in real Java codebases — with a real-world portfolio risk engine as a running example.*
-
-> Everything below refers specifically to the JDK's `ForkJoinPool`, `ForkJoinTask`, `RecursiveTask`/`RecursiveAction`, and related classes in `java.util.concurrent`, introduced in **Java 7** (JSR 166) and still the underlying engine behind `Stream.parallelStream()`, `CompletableFuture`'s async methods, and the Java 21+ virtual thread scheduler.
-
----
-
 ## Table of Contents
 
 1. [Why does ForkJoinPool even exist?](#1-why-does-forkjoinpool-even-exist)
