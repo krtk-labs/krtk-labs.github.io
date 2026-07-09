@@ -1,3 +1,8 @@
+---
+layout: default
+title: Fork-Join Pool Guide
+---
+
 # ForkJoinPool Demystified: From `fork()` to Work Stealing
 
 *Understanding what `java.util.concurrent.ForkJoinPool` actually does, why it exists, how its work-stealing scheduler works internally, and when you should (and should not) reach for it in real Java codebases — with a real-world portfolio risk engine as a running example.*
