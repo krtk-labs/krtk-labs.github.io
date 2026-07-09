@@ -461,7 +461,6 @@ Note: These numbers should not be treated as definitive performance characterist
 
 The benchmark was executed on a MacBook Pro (Apple M3 Pro) with 11 CPU cores.
 
-
 ```
 Available processors: 11
 
@@ -472,7 +471,7 @@ poolSize=8    ExecutorService=  1629ms  ForkJoinPool=  1426ms  speedup=1.14x  (r
 poolSize=11   ExecutorService=  1221ms  ForkJoinPool=  1048ms  speedup=1.17x  (results match: true)
 ```
 
-** What should we take away from this?
+**What should we take away from this?**
 
 The first thing you'll notice is that both implementations scale well as additional CPU cores become available. That's expected—both are able to execute work in parallel.
 
