@@ -20,3 +20,7 @@ back_to_top: true
 back_to_top_text: "Back to top"
 
 footer_content: "© 2026 Kartik Vaidyanathan"
+
+logo: "/assets/images/logo.svg"
+
+favicon_ico: "/assets/images/favicon.png"
