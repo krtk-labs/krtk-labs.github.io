@@ -1,0 +1,83 @@
+---
+---
+
+@import "./color_schemes/blueprint";
+
+/*
+ * Blueprint & Code customizations
+ */
+
+.side-bar {
+    background: white;
+    border-right: 1px solid #e5e7eb;
+}
+
+.main {
+    background: white;
+}
+
+.site-title {
+    color: #111827 !important;
+    font-weight: 700;
+}
+
+.site-title:hover {
+    color: #991b1b !important;
+}
+
+.nav-list .nav-list-item .nav-list-link.active {
+    background: transparent;
+    color: #991b1b;
+    font-weight: 600;
+    border-left: 4px solid #991b1b;
+    padding-left: 12px;
+}
+
+.nav-list-link:hover {
+    background: #fafafa;
+    color: #991b1b;
+}
+
+h1,
+h2,
+h3,
+h4 {
+    color: #111827;
+}
+
+a {
+    color: #b91c1c;
+}
+
+a:hover {
+    color: #991b1b;
+}
+
+.search-input {
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+}
+
+.search-input:focus {
+    border-color: #b91c1c;
+}
+
+table {
+    border: 1px solid #e5e7eb;
+}
+
+th {
+    background: #fafafa;
+}
+
+pre {
+    border-radius: 8px;
+}
+
+code {
+    font-size: 0.9rem;
+}
+
+.site-footer {
+    color: #6b7280;
+}
