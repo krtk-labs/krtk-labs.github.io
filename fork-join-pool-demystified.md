@@ -94,7 +94,7 @@ Picture the initial task as `CalculateRisk(20M trades)`. Rather than crunching t
 
 This recursive decomposition — split until small, then solve directly, then combine — is the entire heart of the fork/join model. It's the same idea you already know as **divide-and-conquer**, just wired directly into a thread pool's scheduler.
 
-## 3. RecursiveTask or RecursiveAction — which one?
+## 3. RecursiveTask or RecursiveAction — which one should you use?
 
 Before writing any code, there's exactly one question to answer: *does this computation need to return a value?*
 
