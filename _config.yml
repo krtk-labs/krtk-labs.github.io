@@ -10,6 +10,8 @@ plugins:
 
 color_scheme: blueprint
 
+aux_links: {}
+
 search_enabled: true
 
 heading_anchors: true
