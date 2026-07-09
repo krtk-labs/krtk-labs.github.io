@@ -8,7 +8,7 @@ remote_theme: just-the-docs/just-the-docs
 plugins:
   - jekyll-remote-theme
 
-color_scheme: dark
+color_scheme: blueprint
 
 search_enabled: true
 
