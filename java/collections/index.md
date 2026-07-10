@@ -60,6 +60,8 @@ The first four are about coordination — whether the collection imposes any ord
 
 But coordination is not the only thing a collection costs you. A fifth dimension sits underneath the other four and explains something they don't: raw operational speed.
 
+Two words show up constantly in these numbers and are easy to conflate: **average** and **amortized**. Average-case complexity describes performance across a range of *inputs* — a `HashMap` get is O(1) on average because a good hash function spreads keys evenly across buckets, but a pathological set of colliding keys can degrade a single lookup toward O(n). Amortized complexity describes performance across a *sequence of operations* on the same structure — an `ArrayList` add is O(1) amortized because most calls just write into free array space at O(1), and the occasional expensive O(n) resize-and-copy is rare enough that, spread out over all the cheap calls since the last resize, its cost averages down to O(1) per call. Average is about the shape of the data; amortized is about an occasional expensive operation being smoothed out over many cheap ones. The two aren't mutually exclusive — a single operation can be described by either, or sometimes both, depending on which source of variability is actually at play.
+
 | Dimension | Question It Answers | Typical Values |
 |---|---|---|
 | **Time Complexity** | How expensive is a get, put, insert, or remove? | O(1) average, O(log n), O(n) |
@@ -88,11 +90,11 @@ The framework has roughly thirty implementations across four families. Almost ev
 
 | Collection | Ordered | Thread-Safe | Synchronization | Bounded | Time Complexity |
 |---|---|---|---|---|---|
-| `ArrayList` | ✅ | ❌ | None | Unbounded | O(1) get, O(n) mid-insert |
-| `LinkedList` | ✅ | ❌ | None | Unbounded | O(1) at ends, O(n) indexed access |
-| `Vector` | ✅ | ✅ | Lock-Based (legacy) | Unbounded | O(1) get, single lock on every call |
-| `Stack` | ✅ | ✅ | Lock-Based (legacy) | Unbounded | O(1) push/pop, single lock on every call |
-| `CopyOnWriteArrayList` | ✅ | ✅ | Copy-On-Write | Unbounded | O(1) read, O(n) write |
+| `ArrayList` | ✅ | ❌ | None | Unbounded | • `get(index)`: O(1)<br>• `add` at end: O(1) amortized<br>• `add`/`remove` in the middle: O(n) |
+| `LinkedList` | ✅ | ❌ | None | Unbounded | • `addFirst`/`addLast`/`removeFirst`/`removeLast`: O(1)<br>• `get(index)`: O(n) |
+| `Vector` | ✅ | ✅ | Lock-Based (legacy) — single lock shared by every method | Unbounded | • `get(index)`: O(1), lock acquired on every call<br>• `add`/`remove` in the middle: O(n) |
+| `Stack` | ✅ | ✅ | Lock-Based (legacy) — inherited from `Vector`, single lock shared by every method | Unbounded | • `push`/`pop`/`peek`: O(1), lock acquired on every call |
+| `CopyOnWriteArrayList` | ✅ | ✅ | Copy-On-Write | Unbounded | • `get` (read): O(1), no locking<br>• `add`/`remove`/`set` (write): O(n), full array copy on every write |
 
 `Vector` and `Stack` score identically to `CopyOnWriteArrayList` on thread-safety, and yet nobody recommends them for a read-heavy concurrent workload — because the *synchronization strategy* column is the one that actually differentiates them. A single coarse lock around every method serializes all access, reads included; copy-on-write does not. Same "Thread-Safe: ✅," very different production behavior. (More on why `Vector` and `Stack` still exist at all in the legacy callout below.)
 
@@ -100,12 +102,12 @@ The framework has roughly thirty implementations across four families. Almost ev
 
 | Collection | Ordered | Thread-Safe | Synchronization | Bounded | Time Complexity |
 |---|---|---|---|---|---|
-| `HashSet` | ❌ | ❌ | None | Unbounded | O(1) average |
-| `LinkedHashSet` | ✅ | ❌ | None | Unbounded | O(1) average |
-| `TreeSet` | ✅ (Sorted) | ❌ | None | Unbounded | O(log n) |
-| `ConcurrentSkipListSet` | ✅ (Sorted) | ✅ | Lock-Free | Unbounded | O(log n) |
-| `CopyOnWriteArraySet` | ✅ | ✅ | Copy-On-Write | Unbounded | O(n) read (linear scan for uniqueness), O(n) write |
-| `EnumSet` | ✅ (ordinal) | ❌ | None | Bounded (enum's fixed constant set) | O(1), bitwise ops |
+| `HashSet` | ❌ | ❌ | None | Unbounded | • `add`/`remove`/`contains`: O(1) average |
+| `LinkedHashSet` | ✅ | ❌ | None | Unbounded | • `add`/`remove`/`contains`: O(1) average |
+| `TreeSet` | ✅ (Sorted) | ❌ | None | Unbounded | • `add`/`remove`/`contains`: O(log n)<br>• navigation (`floor`, `ceiling`, `first`, `last`): O(log n) |
+| `ConcurrentSkipListSet` | ✅ (Sorted) | ✅ | Lock-Free — CAS on skip-list node pointers at each level (Fraser-style lock-free skip list) | Unbounded | • `add`/`remove`/`contains`: O(log n) expected<br>• navigation (`floor`, `ceiling`, `first`, `last`): O(log n) expected |
+| `CopyOnWriteArraySet` | ✅ | ✅ | Copy-On-Write | Unbounded | • `contains`: O(n), linear scan<br>• `add`/`remove`: O(n), linear scan for uniqueness plus full array copy |
+| `EnumSet` | ✅ (ordinal) | ❌ | None | Bounded (enum's fixed constant set) | • `add`/`remove`/`contains`: O(1), single bitwise operation |
 
 `ConcurrentSkipListSet` and `CopyOnWriteArraySet` map onto the same dimensions as their `Map`/`List`-backed equivalents, because that's literally what they are underneath — a `ConcurrentSkipListSet` is a `ConcurrentSkipListMap` with the values discarded, the same relationship `HashSet` has to `HashMap`. `EnumSet` doesn't fit the pattern at all, which is exactly why it gets its own callout below.
 
@@ -113,36 +115,42 @@ The framework has roughly thirty implementations across four families. Almost ev
 
 | Collection | Ordered | Thread-Safe | Synchronization | Blocking | Bounded | Time Complexity |
 |---|---|---|---|---|---|---|
-| `PriorityQueue` | Head-only (priority) | ❌ | None | ❌ | Unbounded | O(log n) insert/remove, O(1) peek |
-| `ArrayDeque` | ✅ | ❌ | None | ❌ | Unbounded (resizable) | O(1) amortized, both ends |
-| `LinkedList` (as Deque) | ✅ | ❌ | None | ❌ | Unbounded | O(1) at ends |
-| `ConcurrentLinkedQueue` | FIFO | ✅ | Lock-Free | ❌ | Unbounded | O(1) amortized |
-| `ConcurrentLinkedDeque` | ✅ | ✅ | Lock-Free | ❌ | Unbounded | O(1) amortized, both ends |
-| `ArrayBlockingQueue` | FIFO | ✅ | Lock-Based | ✅ | Bounded (fixed at construction) | O(1) |
-| `LinkedBlockingQueue` | FIFO | ✅ | Lock-Based | ✅ | Optionally bounded | O(1) + wait time |
-| `LinkedBlockingDeque` | ✅ | ✅ | Lock-Based | ✅ | Bounded | O(1) at ends + wait time |
-| `PriorityBlockingQueue` | Head-only (priority) | ✅ | Lock-Based | ✅ (on take, not put) | Unbounded | O(log n) + wait time |
-| `DelayQueue` | Head-only (by delay expiry) | ✅ | Lock-Based | ✅ | Unbounded | O(log n) + wait time |
-| `SynchronousQueue` | N/A (holds nothing) | ✅ | Lock-Based | ✅ | Zero-capacity (rendezvous) | O(1) handoff |
-| `LinkedTransferQueue` | FIFO | ✅ | Lock-Free | ✅ (optional, producer-side) | Unbounded | O(1) amortized |
+| `PriorityQueue` | Head-only (priority) | ❌ | None | ❌ | Unbounded | • `offer`/`poll` (heap insert/remove): O(log n)<br>• `peek`: O(1) |
+| `ArrayDeque` | ✅ | ❌ | None | ❌ | Unbounded (resizable) | • `offer`/`poll`/`push`/`pop` at either end: O(1) amortized<br>• indexed access: not supported |
+| `LinkedList` (as Deque) | ✅ | ❌ | None | ❌ | Unbounded | • `offer`/`poll`/`push`/`pop` at either end: O(1)<br>• `get(index)`: O(n) |
+| `ConcurrentLinkedQueue` | FIFO | ✅ | Lock-Free — CAS on the tail node's `next` pointer (Michael-Scott non-blocking queue algorithm) | ❌ | Unbounded | • `offer`/`poll`: O(1) amortized |
+| `ConcurrentLinkedDeque` | ✅ | ✅ | Lock-Free — CAS-based doubly-linked list, extending the Michael-Scott algorithm to both ends | ❌ | Unbounded | • `offer`/`poll`/`push`/`pop` at either end: O(1) amortized |
+| `ArrayBlockingQueue` | FIFO | ✅ | Lock-Based — single lock shared by `put` and `take` | ✅ | Bounded (fixed at construction) | • `put`/`take`: O(1) plus unbounded wait when full/empty |
+| `LinkedBlockingQueue` | FIFO | ✅ | Lock-Based — two-lock design, separate locks for `put` and `take` | ✅ | Optionally bounded | • `put`/`take`: O(1) plus unbounded wait when full/empty |
+| `LinkedBlockingDeque` | ✅ | ✅ | Lock-Based — single lock shared by both ends (deque operations can touch head and tail together) | ✅ | Bounded | • `put`/`take` at either end: O(1) plus unbounded wait when full/empty |
+| `PriorityBlockingQueue` | Head-only (priority) | ✅ | Lock-Based — single lock guarding the underlying heap array | ✅ (on `take`, not `put`) | Unbounded | • `put` (heap insert): O(log n)<br>• `take` (heap remove): O(log n) plus unbounded wait when empty |
+| `DelayQueue` | Head-only (by delay expiry) | ✅ | Lock-Based — single lock guarding the underlying heap array | ✅ | Unbounded | • `put` (heap insert): O(log n)<br>• `take`: O(log n) plus unbounded wait until the head's delay expires |
+| `SynchronousQueue` | N/A (holds nothing) | ✅ | Lock-Free — CAS-based dual stack/queue algorithm (Scherer-Scott-Lea) | ✅ | Zero-capacity (rendezvous) | • `put`/`take`: O(1) handoff plus unbounded wait for a matching thread |
+| `LinkedTransferQueue` | FIFO | ✅ | Lock-Free — CAS-based dual-queue algorithm (nodes represent either data or a waiting consumer) | ✅ (optional, producer-side) | Unbounded | • `put`/`poll`: O(1) amortized<br>• `transfer`: O(1) amortized plus unbounded wait for a consumer to receive |
 
-This is the family where nearly every dimension gets exercised at once, which is why it has almost twice as many implementations as any other. Note `PriorityQueue` and `PriorityBlockingQueue` are marked "head-only" rather than "sorted" — that's the correction from earlier: a priority queue guarantees the next element you poll is the smallest (or largest), not that a full iteration comes back in order. `DelayQueue` is a variation on the same idea, ordering by "time until this element's delay expires" instead of a comparator. And `SynchronousQueue` genuinely breaks the "Ordered" column, since a structure that never holds more than zero elements at rest doesn't have an ordering to speak of — it's included here specifically because it's the cleanest illustration of what "zero-capacity" as a boundedness value actually means.
+This is the family where nearly every dimension gets exercised at once, which is why it has almost twice as many implementations as any other. Note `PriorityQueue` and `PriorityBlockingQueue` are marked "head-only" rather than "sorted" — that's the correction from earlier: a priority queue guarantees the next element you poll is the smallest (or largest), not that a full iteration comes back in order. `DelayQueue` is a variation on the same idea, ordering by "time until this element's delay expires" instead of a comparator. And `SynchronousQueue` genuinely breaks the "Ordered" column, since a structure that never holds more than zero elements at rest doesn't have an ordering to speak of — it's included here specifically because it's the cleanest illustration of what "zero-capacity" as a boundedness value actually means. `SynchronousQueue` is also worth a specific correction: it's easy to assume anything this simple must be lock-based, but since Java 6 it's implemented as a CAS-based dual stack/queue with no traditional lock at all.
+
+`ArrayDeque` and `LinkedList` used as a `Deque` show the same pattern one level up in this table: identical ordering, identical thread-safety (none), identical O(1) time complexity at both ends. The table alone gives no reason to prefer one. The real difference is exactly what Big-O hides — `LinkedList` allocates a new node object on every insertion and pays for pointer-chasing on every access, while `ArrayDeque` is backed by a contiguous resizable array with no per-element allocation and far better cache locality. Both are O(1) amortized at the ends; in practice `ArrayDeque` is consistently faster, which is exactly why the JDK's own documentation recommends it over `LinkedList` for stack and queue use.
+
+`ArrayBlockingQueue` and `LinkedBlockingQueue` are worth a closer look too, because on paper they look almost identical — same ordering, same thread-safety, same O(1) time complexity, both blocking. What actually separates them doesn't show up as a difference in Big-O at all; it shows up in the Synchronization Strategy column once you look past the generic "Lock-Based" label. `ArrayBlockingQueue` guards both ends of the queue with a single lock, so a `put()` and a `take()` cannot proceed at the same time even when the queue is neither full nor empty — producers and consumers actively contend with each other on every operation. `LinkedBlockingQueue` uses two independent locks, one for the head and one for the tail, so a producer and a consumer can run concurrently without ever touching the same lock. Under light load the two are indistinguishable; under sustained concurrent producer-consumer traffic, `LinkedBlockingQueue`'s split-lock design gives it meaningfully higher throughput, which is exactly the kind of difference a same-looking Big-O row can hide. `LinkedBlockingQueue` also pays a cost `ArrayBlockingQueue` doesn't: because it's backed by linked nodes rather than a pre-allocated array, every `put()` allocates a new node, adding garbage-collection pressure that the array-backed queue avoids entirely.
 
 **Map implementations**
 
 | Collection | Ordered | Thread-Safe | Synchronization | Bounded | Time Complexity |
 |---|---|---|---|---|---|
-| `HashMap` | ❌ | ❌ | None | Unbounded | O(1) average |
-| `LinkedHashMap` | ✅ | ❌ | None | Unbounded | O(1) average |
-| `TreeMap` | ✅ (Sorted) | ❌ | None | Unbounded | O(log n) |
-| `Hashtable` | ❌ | ✅ | Lock-Based (legacy) | Unbounded | O(1) average, single lock on every call |
-| `ConcurrentHashMap` | ❌ | ✅ | Mostly Lock-Free | Unbounded | O(1) average |
-| `ConcurrentSkipListMap` | ✅ (Sorted) | ✅ | Lock-Free | Unbounded | O(log n) |
-| `EnumMap` | ✅ (ordinal) | ❌ | None | Bounded (enum's fixed constant set) | O(1), array indexing |
-| `WeakHashMap` | ❌ | ❌ | None | Unbounded, but self-pruning | O(1) average |
-| `IdentityHashMap` | ❌ | ❌ | None | Unbounded | O(1) average |
+| `HashMap` | ❌ | ❌ | None | Unbounded | • `get`/`put`/`remove`/`containsKey`: O(1) average |
+| `LinkedHashMap` | ✅ | ❌ | None | Unbounded | • `get`/`put`/`remove`/`containsKey`: O(1) average |
+| `TreeMap` | ✅ (Sorted) | ❌ | None | Unbounded | • `get`/`put`/`remove`: O(log n)<br>• navigation (`floorKey`, `ceilingKey`, `firstKey`, `lastKey`): O(log n) |
+| `Hashtable` | ❌ | ✅ | Lock-Based (legacy) — single lock shared by every method | Unbounded | • `get`/`put`/`remove`: O(1) average, lock acquired on every call |
+| `ConcurrentHashMap` | ❌ | ✅ | CAS for uncontended inserts into an empty bin; a `synchronized` block scoped to that one bin on collision or resize — never one global lock | Unbounded | • `get`: O(1) average, typically no locking at all<br>• `put`/`remove`: O(1) average |
+| `ConcurrentSkipListMap` | ✅ (Sorted) | ✅ | Lock-Free — CAS on skip-list node pointers at each level (Fraser-style lock-free skip list) | Unbounded | • `get`/`put`/`remove`: O(log n) expected<br>• navigation (`floorKey`, `ceilingKey`, `firstKey`, `lastKey`): O(log n) expected |
+| `EnumMap` | ✅ (ordinal) | ❌ | None | Bounded (enum's fixed constant set) | • `get`/`put`/`remove`: O(1), direct array indexing by ordinal |
+| `WeakHashMap` | ❌ | ❌ | None | Unbounded, but self-pruning | • `get`/`put`/`remove`: O(1) average |
+| `IdentityHashMap` | ❌ | ❌ | None | Unbounded | • `get`/`put`/`remove`: O(1) average |
 
-`Hashtable` slots in next to `ConcurrentHashMap` on thread-safety but, like `Vector`, gets there with one lock around everything — a direct ancestor of `Collections.synchronizedMap()`, not a competitor to the modern concurrent maps. `EnumMap`, `WeakHashMap`, and `IdentityHashMap`, on the other hand, don't lose to the six dimensions so much as answer a question the six dimensions don't ask at all. Both groups get their own reasoning below rather than being forced into this table's columns.
+Look closely at `HashMap` and `IdentityHashMap`: every column matches, and that's not an oversight. The six dimensions genuinely cannot tell them apart, because the real difference — reference equality (`==`) instead of `.equals()` for deciding "same key" — isn't a performance or concurrency trade-off at all, it's a different definition of "same." See the equality-semantics reasoning in the Domain-Specialized Collections section below for why that distinction still matters despite being completely invisible in this table.
+
+`Hashtable` slots in next to `ConcurrentHashMap` on thread-safety but, like `Vector`, gets there with one lock around everything — a direct ancestor of `Collections.synchronizedMap()`, not a competitor to the modern concurrent maps. `EnumMap` and `WeakHashMap`, on the other hand, don't lose to the six dimensions so much as answer a question the six dimensions don't ask at all. Both groups get their own reasoning below rather than being forced into this table's columns.
 
 ## Choosing a Collection in Practice
 
