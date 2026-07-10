@@ -1,6 +1,6 @@
 ---
 layout: default
-title: ForkJoinPool
+title: Inside ForkJoinPool
 parent: Multithreading
 grand_parent: Java
 nav_order: 3
