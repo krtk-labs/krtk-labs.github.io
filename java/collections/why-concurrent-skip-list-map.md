@@ -1,4 +1,4 @@
-# Skip Lists in Java: Why `ConcurrentSkipListMap` Exists, and When You Actually Need It
+# Understanding Skip Lists and `ConcurrentSkipListMap`
 
 If you have written concurrent Java, you have used `ConcurrentHashMap`. It is fast, it is battle-tested, and it is the default answer whenever someone asks "how do I safely share a map across threads?"
 
