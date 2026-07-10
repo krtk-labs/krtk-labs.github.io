@@ -136,7 +136,7 @@ This article is the starting point for a series that works through the framework
 
 **Deep Dives**
 - Inside `ConcurrentHashMap`
-- [Inside `ConcurrentSkipListMap`](./why-concurrent-skip-map.md)
+- [Inside `ConcurrentSkipListMap`](./why-concurrent-skip-list-map.md)
 - Copy-On-Write Collections
 - Blocking Queues
 - ArrayDeque vs LinkedList
