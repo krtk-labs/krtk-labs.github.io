@@ -13,4 +13,7 @@ Concurrency is one of Java's greatest strengths.
 
 This section explores the primitives, frameworks, and execution models that enable highly concurrent applications.
 
-Topics range from basic thread creation to modern virtual threads and structured concurrency.
+
+**Deep Dives**
+- [Inside ForkJoinPool`](./why-fork-join-pool.md)
+
