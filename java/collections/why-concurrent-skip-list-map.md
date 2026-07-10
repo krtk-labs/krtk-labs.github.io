@@ -142,7 +142,7 @@ The index is allowed to lag behind. The data is not.
 
 Every operation synchronizes only on the specific pointers it touches, not on the map as a whole. Two threads inserting at opposite ends of the price range never contend with each other at all. Reads stay entirely lock-free. Writes only pay a retry when they genuinely collide with another write at the same spot.
 
-This is the actual mechanism behind the trading engine below: three producer threads can hammer `put()` concurrently, a reader can call `firstEntry()` and `lastEntry()`, and a range query can call `subMap()` - all at the same time, on the same map - because none of them are waiting on one giant lock. CAS handles conflicting writes, `volatile` handles visibility, and the bottom-level list stays correct throughout.
+This is the actual mechanism behind the trading engine below: three producer threads can hammer `put()` concurrently, a reader can call `firstEntry()` and `lastEntry()`, and a range query can call `subMap()` - all at the same time, on the same map - because none of them are waiting on one giant lock. If I had one takeway to understand the internals it would be this : **CAS handles conflicting writes, `volatile` handles visibility, and the bottom-level list stays correct throughout.** 
 
 ## A Trading Engine, End to End
 
