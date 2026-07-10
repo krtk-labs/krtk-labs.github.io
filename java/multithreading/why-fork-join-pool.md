@@ -1,6 +1,7 @@
 ---
-layout: default
-title: Fork-Join Pool Guide
+title: Fork Join Pool
+parent: Multithreading
+grand_parent: Java
 ---
 
 # ForkJoinPool Demystified: From `fork()` to Work Stealing
