@@ -1,7 +1,9 @@
 ---
+layout: default
 title: ConcurrentSkipListMap
 parent: Collections
 grand_parent: Java
+nav_order: 3
 ---
 
 # Understanding Skip Lists and `ConcurrentSkipListMap`
