@@ -1,7 +1,9 @@
 ---
+layout: default
 title: Fork Join Pool
 parent: Multithreading
 grand_parent: Java
+nav_order: 3
 ---
 
 # ForkJoinPool Demystified: From `fork()` to Work Stealing
