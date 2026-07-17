@@ -248,5 +248,7 @@ This article is the starting point for a series that works through the framework
 - ArrayDeque vs LinkedList
 - Why WeakHashMap Doesn't Need Manual Eviction
 - EnumSet and EnumMap: Collections as Bitmasks
+- [`Sentinel Boundaries`](./sentinel_boundaries.md)
+  
 
 If you found this useful, share it with someone still importing `Vector` in 2026, and keep an eye out for the next piece in the series: **Ordered vs Sorted vs Unordered Collections**.
