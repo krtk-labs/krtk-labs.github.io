@@ -1,0 +1,512 @@
+# Evolving the Observer Pattern - Part 3
+# Building a Type-Safe EventBus in Java
+
+In the previous article, we extracted listener management from our services and introduced the idea of an `EventBus`.
+
+Conceptually, the EventBus was responsible for three things:
+
+- Registering listeners
+- Unregistering listeners
+- Publishing events
+
+That sounds simple enough.
+
+But as soon as we start implementing it, a series of interesting design questions appear.
+
+- How do we ensure only valid events can be published?
+- How do we make the EventBus work for any event type?
+- Where do we store listeners?
+- How do we make publishing type-safe?
+- Why does every EventBus implementation seem to contain an unchecked cast?
+
+By the end of this article, we'll have a fully functional EventBus that supports multiple event types while remaining completely type-safe from the caller's perspective.
+
+---
+
+# The Finished Project
+
+Before writing any code, let's see what we're trying to build.
+
+```
+eventbus
+│
+├── Event.java
+├── EventListener.java
+├── EventBus.java
+│
+├── events
+│   ├── OrderPlacedEvent.java
+│   └── PaymentCompletedEvent.java
+│
+└── listeners
+    ├── EmailListener.java
+    ├── AnalyticsListener.java
+    ├── WarehouseListener.java
+    ├── InvoiceListener.java
+    └── FraudDetectionListener.java
+```
+
+We'll build every one of these classes from scratch.
+
+---
+
+# Step 1 — Introducing an Event
+
+Let's begin with a simple question.
+
+What exactly should be allowed to travel through our EventBus?
+
+Without any restrictions, all of these become legal.
+
+```java
+eventBus.publish("Hello");
+```
+
+```java
+eventBus.publish(42);
+```
+
+```java
+eventBus.publish(new File("orders.csv"));
+```
+
+Clearly, these are not events.
+
+They are simply arbitrary Java objects.
+
+We need a way to express intent.
+
+That's where a **marker interface** comes in.
+
+Unlike a normal interface, a marker interface doesn't define any methods.
+
+Its purpose is simply to identify a category of objects.
+
+Our Event interface is therefore surprisingly small.
+
+```java
+package com.pristinum.eventbus;
+
+public interface Event {
+}
+```
+
+Every domain event in our application will implement this interface.
+
+---
+
+# Step 2 — Defining Events
+
+An event represents something that has already happened.
+
+Notice the tense.
+
+Events describe facts.
+
+They don't represent commands.
+
+Let's define two events.
+
+```java
+package com.pristinum.eventbus.events;
+
+import com.pristinum.eventbus.Event;
+import com.pristinum.domain.Order;
+
+public record OrderPlacedEvent(Order order)
+        implements Event {
+}
+```
+
+Another event.
+
+```java
+package com.pristinum.eventbus.events;
+
+import com.pristinum.eventbus.Event;
+import com.pristinum.domain.Payment;
+
+public record PaymentCompletedEvent(Payment payment)
+        implements Event {
+}
+```
+
+Records work particularly well here because events are immutable by nature.
+
+Once an order has been placed, that fact shouldn't change.
+
+---
+
+# Step 3 — The Listener Contract
+
+In Part 2 we generalized all listeners into a single generic interface.
+
+That remains unchanged.
+
+```java
+package com.pristinum.eventbus;
+
+@FunctionalInterface
+public interface EventListener<T extends Event> {
+
+    void onEvent(T event);
+
+}
+```
+
+This interface is intentionally tiny.
+
+Every listener simply receives an event and reacts to it.
+
+---
+
+# Step 4 — What Should an EventBus Remember?
+
+Before writing methods, let's think about state.
+
+Suppose we register three listeners.
+
+```
+OrderPlacedEvent
+    ├── EmailListener
+    ├── AnalyticsListener
+    └── WarehouseListener
+```
+
+Later we register payment listeners.
+
+```
+PaymentCompletedEvent
+    ├── InvoiceListener
+    └── FraudDetectionListener
+```
+
+Conceptually, this is nothing more than a mapping.
+
+```
+Event Type
+        ↓
+List of Listeners
+```
+
+That naturally becomes
+
+```java
+Map<
+    Class<? extends Event>,
+    List<EventListener<? extends Event>>
+>
+```
+
+Now we're ready to implement the EventBus.
+
+---
+
+# Step 5 — Creating the EventBus
+
+Let's start with the skeleton.
+
+```java
+package com.pristinum.eventbus;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class EventBus {
+
+    private final Map<
+            Class<? extends Event>,
+            List<EventListener<? extends Event>>
+            > listeners = new ConcurrentHashMap<>();
+
+}
+```
+
+This is the only state inside our EventBus.
+
+Everything else is behaviour.
+
+---
+
+# Step 6 — Registering Listeners
+
+Suppose we write
+
+```java
+eventBus.register(
+        OrderPlacedEvent.class,
+        new EmailListener());
+```
+
+If this is the first listener for `OrderPlacedEvent`, we need to create a list.
+
+Otherwise, we simply append to the existing list.
+
+Java's `computeIfAbsent()` expresses this beautifully.
+
+```java
+package com.pristinum.eventbus;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class EventBus {
+
+    private final Map<
+            Class<? extends Event>,
+            List<EventListener<? extends Event>>
+            > listeners = new ConcurrentHashMap<>();
+
+    public <T extends Event> void register(
+            Class<T> eventType,
+            EventListener<T> listener
+    ) {
+
+        listeners
+                .computeIfAbsent(
+                        eventType,
+                        key -> new CopyOnWriteArrayList<>())
+                .add(listener);
+
+    }
+
+}
+```
+
+The method is generic because the EventBus should work for every event type, not just orders.
+
+---
+
+# Step 7 — Unregistering Listeners
+
+Removing a listener is slightly more interesting.
+
+First, we locate the list.
+
+If no listeners exist, we're done.
+
+Otherwise, remove the listener.
+
+Finally, if the list becomes empty, remove the entire map entry.
+
+```java
+public <T extends Event> void unregister(
+        Class<T> eventType,
+        EventListener<T> listener
+) {
+
+    List<EventListener<? extends Event>> eventListeners =
+            listeners.get(eventType);
+
+    if (eventListeners == null) {
+        return;
+    }
+
+    eventListeners.remove(listener);
+
+    if (eventListeners.isEmpty()) {
+        listeners.remove(eventType);
+    }
+
+}
+```
+
+Notice that unregistering one listener does **not** remove the event type.
+
+Only when the final listener disappears do we remove the key.
+
+---
+
+# Step 8 — Publishing Events
+
+Publishing is where most developers become uncomfortable.
+
+Let's implement it first.
+
+We'll explain the tricky part afterwards.
+
+```java
+@SuppressWarnings("unchecked")
+public <T extends Event> void publish(T event) {
+
+    List<EventListener<? extends Event>> eventListeners =
+            listeners.get(event.getClass());
+
+    if (eventListeners == null) {
+        return;
+    }
+
+    for (EventListener<? extends Event> listener : eventListeners) {
+
+        EventListener<T> typedListener =
+                (EventListener<T>) listener;
+
+        typedListener.onEvent(event);
+
+    }
+
+}
+```
+
+This completes our EventBus.
+
+But there's one obvious question.
+
+Why is there an unchecked cast?
+
+---
+
+# Understanding the Unchecked Cast
+
+Our map stores listeners as
+
+```java
+EventListener<? extends Event>
+```
+
+The compiler knows each object is *some* kind of EventListener.
+
+What it doesn't know is **which** event that listener accepts.
+
+Fortunately, we do.
+
+Consider registration.
+
+```java
+eventBus.register(
+        OrderPlacedEvent.class,
+        new EmailListener());
+```
+
+The EmailListener is stored under the key
+
+```
+OrderPlacedEvent.class
+```
+
+Later, when we publish
+
+```java
+eventBus.publish(
+        new OrderPlacedEvent(order));
+```
+
+we retrieve listeners using the exact same key.
+
+```
+listeners.get(OrderPlacedEvent.class)
+```
+
+Every listener in that list was registered specifically for an `OrderPlacedEvent`.
+
+The compiler cannot infer this relationship.
+
+The EventBus can.
+
+That's why the cast is safe.
+
+It's also why almost every generic EventBus implementation you'll encounter contains this exact unchecked cast.
+
+```
+The compiler lacks the context.
+
+The EventBus doesn't.
+```
+
+---
+
+# The Complete EventBus
+
+```java
+package com.pristinum.eventbus;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class EventBus {
+
+    private final Map<
+            Class<? extends Event>,
+            List<EventListener<? extends Event>>
+            > listeners = new ConcurrentHashMap<>();
+
+    public <T extends Event> void register(
+            Class<T> eventType,
+            EventListener<T> listener
+    ) {
+
+        listeners
+                .computeIfAbsent(
+                        eventType,
+                        key -> new CopyOnWriteArrayList<>())
+                .add(listener);
+
+    }
+
+    public <T extends Event> void unregister(
+            Class<T> eventType,
+            EventListener<T> listener
+    ) {
+
+        List<EventListener<? extends Event>> eventListeners =
+                listeners.get(eventType);
+
+        if (eventListeners == null) {
+            return;
+        }
+
+        eventListeners.remove(listener);
+
+        if (eventListeners.isEmpty()) {
+            listeners.remove(eventType);
+        }
+
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T extends Event> void publish(T event) {
+
+        List<EventListener<? extends Event>> eventListeners =
+                listeners.get(event.getClass());
+
+        if (eventListeners == null) {
+            return;
+        }
+
+        for (EventListener<? extends Event> listener : eventListeners) {
+
+            EventListener<T> typedListener =
+                    (EventListener<T>) listener;
+
+            typedListener.onEvent(event);
+
+        }
+
+    }
+
+}
+```
+
+---
+
+# What We've Built
+
+Although the implementation is less than a hundred lines of code, we've built something surprisingly flexible.
+
+Our EventBus can
+
+- publish any event type
+- register multiple listeners
+- unregister listeners dynamically
+- safely dispatch events
+- remain completely decoupled from business logic
+
+Even better, every service in our application can now share this single piece of infrastructure.
+
+In the next article, we'll build a complete sample application around this EventBus with multiple listeners, services, and events. Then we'll explore its limitations and evolve it into an asynchronous EventBus capable of running listeners in parallel.
