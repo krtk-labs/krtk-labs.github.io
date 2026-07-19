@@ -1,0 +1,525 @@
+# Evolving the Observer Pattern, Part 2: Extracting an EventBus
+
+In the [previous article], we started with a simple `OrderService` that sent an email after an order was placed. As the application grew, more responsibilities were added—analytics, inventory updates, loyalty points, audit logging—and we introduced the Observer Pattern to keep `OrderService` focused on a single responsibility.
+
+Eventually, we generalized our `OrderListener` into a reusable `EventListener<T>` interface.
+
+At that point, it looked like we had solved the problem.
+
+Or had we?
+
+Let's revisit our implementation.
+
+```java
+public class OrderService {
+
+    private final List<EventListener<OrderPlacedEvent>> listeners =
+            new ArrayList<>();
+
+    public void register(EventListener<OrderPlacedEvent> listener) {
+        listeners.add(listener);
+    }
+
+    public void unregister(EventListener<OrderPlacedEvent> listener) {
+        listeners.remove(listener);
+    }
+
+    public void placeOrder(Order order) {
+
+        save(order);
+
+        OrderPlacedEvent event = new OrderPlacedEvent(order);
+
+        for (EventListener<OrderPlacedEvent> listener : listeners) {
+            listener.onEvent(event);
+        }
+    }
+}
+```
+
+This is a perfectly good implementation.
+
+But now imagine our application grows.
+
+We introduce a `PaymentService`.
+
+```java
+public class PaymentService {
+
+    private final List<EventListener<PaymentCompletedEvent>> listeners =
+            new ArrayList<>();
+
+    public void register(EventListener<PaymentCompletedEvent> listener) {
+        listeners.add(listener);
+    }
+
+    public void unregister(EventListener<PaymentCompletedEvent> listener) {
+        listeners.remove(listener);
+    }
+
+    public void completePayment(Payment payment) {
+
+        PaymentCompletedEvent event =
+                new PaymentCompletedEvent(payment);
+
+        for (EventListener<PaymentCompletedEvent> listener : listeners) {
+            listener.onEvent(event);
+        }
+    }
+}
+```
+
+Ignore the business logic for a moment.
+
+Both services now have
+
+- a list of listeners
+- a `register()` method
+- an `unregister()` method
+- a loop that notifies listeners
+
+The business logic is different.
+
+The listener management is identical.
+
+That raises an interesting question.
+
+> **Why does every service know how to manage listeners?**
+
+Managing listeners isn't business logic.
+
+It's infrastructure.
+
+Whenever multiple classes perform the same infrastructure work, it's usually a good candidate for extraction.
+
+That extraction is what we call an **EventBus**.
+
+---
+
+# Before Writing Code
+
+Most implementations start by creating an `EventBus` class.
+
+Let's resist that temptation.
+
+Instead, ask yourself another question.
+
+> **What information does an EventBus actually need to store?**
+
+Suppose we register three listeners.
+
+```java
+eventBus.register(
+    OrderPlacedEvent.class,
+    new EmailListener());
+
+eventBus.register(
+    OrderPlacedEvent.class,
+    new AnalyticsListener());
+
+eventBus.register(
+    OrderPlacedEvent.class,
+    new WarehouseListener());
+```
+
+Conceptually, the EventBus now stores something like this.
+
+```
+OrderPlacedEvent
+    ├── EmailListener
+    ├── AnalyticsListener
+    └── WarehouseListener
+```
+
+Now suppose we also register payment listeners.
+
+```java
+eventBus.register(
+    PaymentCompletedEvent.class,
+    new InvoiceListener());
+
+eventBus.register(
+    PaymentCompletedEvent.class,
+    new FraudDetectionListener());
+```
+
+Our EventBus now looks like this.
+
+```
+OrderPlacedEvent
+    ├── EmailListener
+    ├── AnalyticsListener
+    └── WarehouseListener
+
+PaymentCompletedEvent
+    ├── InvoiceListener
+    └── FraudDetectionListener
+```
+
+Doesn't this look remarkably similar to a `Map`?
+
+Each event type maps to a list of listeners.
+
+That observation naturally leads us to our first data structure.
+
+```java
+Map<
+    Class<? extends Event>,
+    List<EventListener<? extends Event>>
+>
+```
+
+Notice that we didn't invent this design.
+
+We discovered it by asking what information the EventBus needs to remember.
+
+---
+
+# Introducing an Event
+
+Our next question is equally important.
+
+> **What exactly can be published?**
+
+Without any restrictions, all of these become valid.
+
+```java
+eventBus.publish("Hello");
+```
+
+```java
+eventBus.publish(42);
+```
+
+```java
+eventBus.publish(new File("orders.csv"));
+```
+
+Clearly, that doesn't make much sense.
+
+We only want to publish domain events.
+
+A simple way to express this intent is with a marker interface.
+
+```java
+public interface Event {
+}
+```
+
+Now every event in our application implements this interface.
+
+```java
+public record OrderPlacedEvent(Order order)
+        implements Event {
+}
+```
+
+```java
+public record PaymentCompletedEvent(Payment payment)
+        implements Event {
+}
+```
+
+The interface doesn't define any methods.
+
+Its purpose is simply to say,
+
+> "This object represents something that happened within the application."
+
+---
+
+# Our Listener Contract
+
+The listener remains exactly as we designed it in the previous article.
+
+```java
+@FunctionalInterface
+public interface EventListener<T extends Event> {
+
+    void onEvent(T event);
+
+}
+```
+
+Different listeners simply specialize the event they are interested in.
+
+```java
+public class EmailListener
+        implements EventListener<OrderPlacedEvent> {
+
+    @Override
+    public void onEvent(OrderPlacedEvent event) {
+
+        System.out.println("Sending confirmation email");
+
+    }
+}
+```
+
+```java
+public class AnalyticsListener
+        implements EventListener<OrderPlacedEvent> {
+
+    @Override
+    public void onEvent(OrderPlacedEvent event) {
+
+        System.out.println("Recording analytics");
+
+    }
+}
+```
+
+```java
+public class FraudDetectionListener
+        implements EventListener<PaymentCompletedEvent> {
+
+    @Override
+    public void onEvent(PaymentCompletedEvent event) {
+
+        System.out.println("Running fraud checks");
+
+    }
+}
+```
+
+Now we're finally ready to build our EventBus.
+
+---
+
+# Building the EventBus
+
+Let's start with the internal data structure.
+
+```java
+public class EventBus {
+
+    private final Map<
+            Class<? extends Event>,
+            List<EventListener<? extends Event>>
+            > listeners = new ConcurrentHashMap<>();
+
+}
+```
+
+The EventBus has only one responsibility.
+
+It remembers which listeners are interested in which events.
+
+---
+
+# Registering a Listener
+
+Adding a listener is straightforward.
+
+```java
+public <T extends Event> void register(
+        Class<T> eventType,
+        EventListener<T> listener) {
+
+    listeners
+            .computeIfAbsent(
+                    eventType,
+                    key -> new CopyOnWriteArrayList<>())
+            .add(listener);
+
+}
+```
+
+The first time an event type is registered, we create a new list.
+
+Every subsequent registration simply appends another listener to that list.
+
+---
+
+# Removing a Listener
+
+Removing a listener is equally simple.
+
+```java
+public <T extends Event> void unregister(
+        Class<T> eventType,
+        EventListener<T> listener) {
+
+    List<EventListener<? extends Event>> eventListeners =
+            listeners.get(eventType);
+
+    if (eventListeners == null) {
+        return;
+    }
+
+    eventListeners.remove(listener);
+
+    if (eventListeners.isEmpty()) {
+        listeners.remove(eventType);
+    }
+
+}
+```
+
+Notice that removing a listener does **not** remove the event type itself.
+
+Only when the last listener disappears do we remove the map entry.
+
+---
+
+# Publishing an Event
+
+Publishing is where things become slightly more interesting.
+
+```java
+@SuppressWarnings("unchecked")
+public <T extends Event> void publish(T event) {
+
+    List<EventListener<? extends Event>> eventListeners =
+            listeners.get(event.getClass());
+
+    if (eventListeners == null) {
+        return;
+    }
+
+    for (EventListener<? extends Event> listener : eventListeners) {
+
+        EventListener<T> typedListener =
+                (EventListener<T>) listener;
+
+        typedListener.onEvent(event);
+
+    }
+
+}
+```
+
+At first glance, the unchecked cast looks suspicious.
+
+Why is it necessary?
+
+The answer lies in Java's generics.
+
+Our map stores listeners as
+
+```java
+EventListener<? extends Event>
+```
+
+The compiler knows that each object is **some** kind of `EventListener`, but it doesn't know which event type it accepts.
+
+Fortunately, we do.
+
+Every listener was registered together with its corresponding event type.
+
+```java
+eventBus.register(
+        OrderPlacedEvent.class,
+        new EmailListener());
+```
+
+When we later look up listeners using the same event type
+
+```java
+listeners.get(OrderPlacedEvent.class)
+```
+
+we know that every listener in the returned list accepts an `OrderPlacedEvent`.
+
+The compiler cannot prove this relationship.
+
+We can.
+
+That's why the unchecked cast is safe.
+
+---
+
+# Wiring Everything Together
+
+The `OrderService` becomes surprisingly small.
+
+```java
+public class OrderService {
+
+    private final EventBus eventBus;
+
+    public OrderService(EventBus eventBus) {
+        this.eventBus = eventBus;
+    }
+
+    public void placeOrder(Order order) {
+
+        save(order);
+
+        eventBus.publish(
+                new OrderPlacedEvent(order));
+
+    }
+}
+```
+
+Likewise, the `PaymentService`.
+
+```java
+public class PaymentService {
+
+    private final EventBus eventBus;
+
+    public PaymentService(EventBus eventBus) {
+        this.eventBus = eventBus;
+    }
+
+    public void completePayment(Payment payment) {
+
+        process(payment);
+
+        eventBus.publish(
+                new PaymentCompletedEvent(payment));
+
+    }
+}
+```
+
+Neither service knows
+
+- who is listening
+- how listeners are stored
+- how many listeners exist
+- how events are delivered
+
+They simply publish facts about what has happened.
+
+The EventBus handles everything else.
+
+---
+
+# Why ConcurrentHashMap and CopyOnWriteArrayList?
+
+You might wonder why we didn't simply use a `HashMap` and an `ArrayList`.
+
+For a toy example, that would work perfectly.
+
+In a real application, however, listeners may be registered while other threads are publishing events.
+
+Using a `ConcurrentHashMap` allows multiple threads to safely access the listener registry.
+
+Similarly, `CopyOnWriteArrayList` allows one thread to iterate over listeners while another thread registers or unregisters one, without throwing a `ConcurrentModificationException`.
+
+This is a good trade-off because listeners are usually registered only during application startup, while publishing happens continuously throughout the application's lifetime.
+
+---
+
+# Where Do We Go From Here?
+
+We've successfully extracted listener management out of every service and into a shared EventBus.
+
+Our services are now smaller, easier to understand, and focused entirely on business logic.
+
+But our EventBus is still synchronous.
+
+If one listener takes five seconds to complete, every other listener waits.
+
+If one listener throws an exception, should the remaining listeners still execute?
+
+Should listeners run in parallel?
+
+Should we retry failed listeners?
+
+Those questions lead us to the next stage in the evolution of our design.
+
+In the next article, we'll evolve this simple EventBus into an asynchronous event processing framework using Java's concurrency primitives while keeping the API just as simple.
